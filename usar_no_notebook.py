@@ -1,7 +1,9 @@
-# usar_no_notebook.py
-# Exemplo de uso no notebook ou script.
+"""
+Exemplo de uso do modulo de analise no notebook ou em scripts Python.
+"""
 
 from agroclima_orbital import executar_analise_completa
+
 
 resultados = executar_analise_completa(
     caminho_csv="dados/dataset_agroclima_orbital.csv",
@@ -11,11 +13,11 @@ resultados = executar_analise_completa(
     mostrar_resumo=True,
 )
 
-# Exemplos para visualizar no notebook:
 df_final = resultados["df"]
-medias = resultados["medias_por_cidade"]
-outliers = resultados["outliers"]
+medias_por_cidade = resultados["medias_por_cidade"]
 correlacao = resultados["correlacao"]
-risco = resultados["tabela_risco"]
+outliers = resultados["outliers"]
+ic_temp_max = resultados["ic_temp_max"]
+tabela_risco = resultados["tabela_risco"]
 
 df_final.head()

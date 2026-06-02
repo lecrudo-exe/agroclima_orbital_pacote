@@ -1,0 +1,15 @@
+﻿,cidade,variavel,q1,q3,iqr,limite_inferior,limite_superior,quantidade_outliers,percentual_outliers
+0,Petrolina/PE,temp_media,25.62,28.85,3.23,20.775,33.695,0,0.0
+1,Petrolina/PE,temp_max,32.32,36.14,3.82,26.59,41.87,13,0.324
+2,Petrolina/PE,temp_min,19.57,22.538,2.968,15.119,26.989,8,0.199
+3,Petrolina/PE,precipitacao,0.0,0.36,0.36,-0.54,0.9,631,15.704
+4,Petrolina/PE,umidade,48.55,63.118,14.568,26.699,84.969,15,0.373
+5,Petrolina/PE,vento,3.2,4.79,1.59,0.815,7.175,2,0.05
+6,Petrolina/PE,radiacao_solar,18.37,24.71,6.34,8.86,34.22,17,0.423
+7,Ribeirao Preto/SP,temp_media,21.63,24.9,3.27,16.725,29.805,144,3.584
+8,Ribeirao Preto/SP,temp_max,27.55,31.75,4.2,21.25,38.05,78,1.941
+9,Ribeirao Preto/SP,temp_min,15.39,20.0,4.61,8.475,26.915,53,1.319
+10,Ribeirao Preto/SP,precipitacao,0.01,3.68,3.67,-5.495,9.185,444,11.05
+11,Ribeirao Preto/SP,umidade,54.822,79.44,24.618,17.896,116.366,0,0.0
+12,Ribeirao Preto/SP,vento,1.59,2.52,0.93,0.195,3.915,50,1.244
+13,Ribeirao Preto/SP,radiacao_solar,15.77,22.92,7.15,5.045,33.645,38,0.946

@@ -1,35 +1,21 @@
 """
-agroclima_orbital.py
+Modulo principal do projeto AgroClima Orbital.
 
-Modulo para analise estatistica do projeto AgroClima Orbital.
-Use no notebook:
-
-from agroclima_orbital import executar_analise_completa
-
-resultados = executar_analise_completa(
-    caminho_csv="dados/dataset_agroclima_orbital.csv",
-    pasta_saida="resultados"
-)
-
-Depois acesse:
-resultados["df"]
-resultados["medias_por_cidade"]
-resultados["outliers"]
-resultados["correlacao"]
-resultados["ic_temp_max"]
-resultados["teste_t"]
-resultados["cohens_d"]
-resultados["tabela_risco"]
+Executa a analise estatistica de risco climatico agricola com dados diarios da
+NASA POWER para Petrolina/PE e Ribeirao Preto/SP.
 """
 
 from pathlib import Path
-import math
 
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy import stats
 
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 MAPA_COLUNAS = {
     "T2M": "temp_media",
@@ -52,160 +38,145 @@ VARIAVEIS = [
 ]
 
 
-def carregar_e_preparar(caminho_csv: str) -> pd.DataFrame:
-    """Carrega o CSV da NASA POWER e prepara as colunas para analise."""
-    df = pd.read_csv(caminho_csv)
+def carregar_e_preparar(caminho_csv: str | Path) -> pd.DataFrame:
+    """Carrega o CSV da NASA POWER e prepara as colunas da analise."""
+    df = pd.read_csv(caminho_csv, encoding="utf-8-sig")
 
-    if "data" not in df.columns:
-        raise ValueError("A coluna 'data' nao foi encontrada no CSV.")
-
-    if "cidade" not in df.columns:
-        raise ValueError("A coluna 'cidade' nao foi encontrada no CSV.")
+    colunas_obrigatorias = {"data", "cidade", "latitude", "longitude"}
+    faltantes = colunas_obrigatorias.difference(df.columns)
+    if faltantes:
+        raise ValueError(f"Colunas obrigatorias ausentes: {sorted(faltantes)}")
 
     df["data"] = pd.to_datetime(df["data"])
+    df = df.rename(columns=MAPA_COLUNAS)
+
+    colunas_faltando = [coluna for coluna in VARIAVEIS if coluna not in df.columns]
+    if colunas_faltando:
+        raise ValueError(f"Colunas climaticas ausentes: {colunas_faltando}")
+
+    df[VARIAVEIS] = df[VARIAVEIS].apply(pd.to_numeric, errors="coerce")
+    df[VARIAVEIS] = df[VARIAVEIS].replace(-999, np.nan)
     df["ano"] = df["data"].dt.year
     df["mes"] = df["data"].dt.month
 
-    df = df.rename(columns=MAPA_COLUNAS)
-
-    colunas_faltando = [col for col in VARIAVEIS if col not in df.columns]
-    if colunas_faltando:
-        raise ValueError(f"Colunas faltando no dataset: {colunas_faltando}")
-
-    return df
+    return df.sort_values(["cidade", "data"]).reset_index(drop=True)
 
 
 def estatistica_descritiva(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Retorna estatistica descritiva geral e por cidade."""
+    """Calcula estatistica descritiva geral e por cidade."""
     descritiva_geral = df[VARIAVEIS].describe().round(3)
-    descritiva_por_cidade = df.groupby("cidade")[VARIAVEIS].describe().round(3)
+    descritiva_por_cidade = (
+        df.groupby("cidade")[VARIAVEIS]
+        .describe()
+        .round(3)
+    )
     return descritiva_geral, descritiva_por_cidade
 
 
-def medias_por_cidade(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula as medias das variaveis por cidade."""
-    return df.groupby("cidade")[VARIAVEIS].mean().round(2)
+def calcular_medias_por_cidade(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula medias das variaveis climaticas por cidade."""
+    return df.groupby("cidade")[VARIAVEIS].mean().round(3)
 
 
-def gerar_histogramas(df: pd.DataFrame, pasta_saida: str = "resultados/graficos") -> None:
-    """Gera histogramas para todas as variaveis principais."""
+def gerar_histogramas(df: pd.DataFrame, pasta_saida: str | Path) -> None:
+    """Gera histogramas das variaveis climaticas por cidade."""
     pasta = Path(pasta_saida)
     pasta.mkdir(parents=True, exist_ok=True)
 
-    for var in VARIAVEIS:
+    for variavel in VARIAVEIS:
         plt.figure(figsize=(9, 5))
-
-        for cidade in df["cidade"].unique():
-            dados = df.loc[df["cidade"] == cidade, var]
-            plt.hist(dados, bins=30, alpha=0.5, label=cidade)
-
-        plt.title(f"Histograma de {var}")
-        plt.xlabel(var)
+        sns.histplot(
+            data=df,
+            x=variavel,
+            hue="cidade",
+            bins=30,
+            kde=True,
+            alpha=0.45,
+        )
+        plt.title(f"Histograma de {variavel}")
+        plt.xlabel(variavel)
         plt.ylabel("Frequencia")
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        plt.grid(True, alpha=0.25)
         plt.tight_layout()
-        plt.savefig(pasta / f"histograma_{var}.png", dpi=150)
+        plt.savefig(pasta / f"histograma_{variavel}.png", dpi=150)
         plt.close()
 
 
-def gerar_boxplots(df: pd.DataFrame, pasta_saida: str = "resultados/graficos") -> None:
-    """Gera boxplots por cidade para identificar outliers visualmente."""
+def gerar_boxplots(df: pd.DataFrame, pasta_saida: str | Path) -> None:
+    """Gera boxplots das variaveis climaticas por cidade."""
     pasta = Path(pasta_saida)
     pasta.mkdir(parents=True, exist_ok=True)
 
-    for var in VARIAVEIS:
+    for variavel in VARIAVEIS:
         plt.figure(figsize=(8, 5))
-        df.boxplot(column=var, by="cidade")
-        plt.title(f"Boxplot de {var} por cidade")
-        plt.suptitle("")
+        sns.boxplot(data=df, x="cidade", y=variavel)
+        plt.title(f"Boxplot de {variavel} por cidade")
         plt.xlabel("Cidade")
-        plt.ylabel(var)
-        plt.grid(True, alpha=0.3)
+        plt.ylabel(variavel)
+        plt.grid(True, axis="y", alpha=0.25)
         plt.tight_layout()
-        plt.savefig(pasta / f"boxplot_{var}.png", dpi=150)
+        plt.savefig(pasta / f"boxplot_{variavel}.png", dpi=150)
         plt.close()
 
 
-def contar_outliers_iqr(dados: pd.DataFrame, coluna: str) -> tuple[int, float, float]:
-    """Conta outliers usando o metodo IQR."""
-    q1 = dados[coluna].quantile(0.25)
-    q3 = dados[coluna].quantile(0.75)
-    iqr = q3 - q1
+def identificar_outliers_iqr(df: pd.DataFrame) -> pd.DataFrame:
+    """Identifica outliers pelo metodo IQR para cada cidade e variavel."""
+    linhas = []
 
-    limite_inferior = q1 - 1.5 * iqr
-    limite_superior = q3 + 1.5 * iqr
+    for cidade, grupo in df.groupby("cidade"):
+        for variavel in VARIAVEIS:
+            serie = grupo[variavel].dropna()
+            q1 = serie.quantile(0.25)
+            q3 = serie.quantile(0.75)
+            iqr = q3 - q1
+            limite_inferior = q1 - 1.5 * iqr
+            limite_superior = q3 + 1.5 * iqr
+            mascara = (serie < limite_inferior) | (serie > limite_superior)
 
-    outliers = dados[
-        (dados[coluna] < limite_inferior)
-        | (dados[coluna] > limite_superior)
-    ]
+            linhas.append(
+                {
+                    "cidade": cidade,
+                    "variavel": variavel,
+                    "q1": round(q1, 3),
+                    "q3": round(q3, 3),
+                    "iqr": round(iqr, 3),
+                    "limite_inferior": round(limite_inferior, 3),
+                    "limite_superior": round(limite_superior, 3),
+                    "quantidade_outliers": int(mascara.sum()),
+                    "percentual_outliers": round(mascara.mean() * 100, 3),
+                }
+            )
 
-    return len(outliers), float(limite_inferior), float(limite_superior)
-
-
-def tabela_outliers(df: pd.DataFrame) -> pd.DataFrame:
-    """Cria tabela com quantidade de outliers por cidade e variavel."""
-    resultados = []
-
-    for cidade in df["cidade"].unique():
-        dados_cidade = df[df["cidade"] == cidade]
-
-        for var in VARIAVEIS:
-            qtd, li, ls = contar_outliers_iqr(dados_cidade, var)
-            resultados.append({
-                "cidade": cidade,
-                "variavel": var,
-                "quantidade_outliers": qtd,
-                "limite_inferior": round(li, 3),
-                "limite_superior": round(ls, 3),
-            })
-
-    return pd.DataFrame(resultados)
+    return pd.DataFrame(linhas)
 
 
-def matriz_correlacao(df: pd.DataFrame) -> pd.DataFrame:
+def calcular_correlacao(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula matriz de correlacao de Pearson."""
     return df[VARIAVEIS].corr().round(3)
 
 
-def gerar_grafico_correlacao(
-    correlacao: pd.DataFrame,
-    pasta_saida: str = "resultados/graficos",
-) -> None:
-    """Gera grafico da matriz de correlacao."""
+def gerar_grafico_correlacao(correlacao: pd.DataFrame, pasta_saida: str | Path) -> None:
+    """Gera heatmap da matriz de correlacao."""
     pasta = Path(pasta_saida)
     pasta.mkdir(parents=True, exist_ok=True)
 
     plt.figure(figsize=(10, 8))
-    plt.imshow(correlacao, aspect="auto")
-    plt.colorbar(label="Correlacao")
-
-    nomes = list(correlacao.columns)
-    plt.xticks(range(len(nomes)), nomes, rotation=45, ha="right")
-    plt.yticks(range(len(nomes)), nomes)
+    sns.heatmap(
+        correlacao,
+        annot=True,
+        fmt=".2f",
+        cmap="coolwarm",
+        center=0,
+        linewidths=0.5,
+    )
     plt.title("Matriz de correlacao entre variaveis climaticas")
-
-    for i in range(len(nomes)):
-        for j in range(len(nomes)):
-            valor = correlacao.iloc[i, j]
-            plt.text(j, i, f"{valor:.2f}", ha="center", va="center")
-
     plt.tight_layout()
     plt.savefig(pasta / "matriz_correlacao.png", dpi=150)
     plt.close()
 
 
-def criar_indice_risco(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Cria indice de risco climatico agricola.
-
-    Regras:
-    - risco_calor: temperatura maxima acima do percentil 75
-    - risco_seca: precipitacao abaixo ou igual ao percentil 25
-    - risco_radiacao: radiacao solar acima do percentil 75
-    - risco_umidade: umidade abaixo do percentil 25
-    """
+def criar_indice_risco_climatico(df: pd.DataFrame) -> pd.DataFrame:
+    """Cria indice e classificacao de risco climatico agricola."""
     df = df.copy()
 
     limite_calor = df["temp_max"].quantile(0.75)
@@ -217,310 +188,260 @@ def criar_indice_risco(df: pd.DataFrame) -> pd.DataFrame:
     df["risco_seca"] = df["precipitacao"] <= limite_baixa_chuva
     df["risco_radiacao"] = df["radiacao_solar"] > limite_radiacao
     df["risco_umidade"] = df["umidade"] < limite_baixa_umidade
-
     df["indice_risco_climatico"] = (
-        df["risco_calor"].astype(int)
-        + df["risco_seca"].astype(int)
-        + df["risco_radiacao"].astype(int)
-        + df["risco_umidade"].astype(int)
+        df[["risco_calor", "risco_seca", "risco_radiacao", "risco_umidade"]]
+        .astype(int)
+        .sum(axis=1)
     )
-
     df["classificacao_risco"] = pd.cut(
         df["indice_risco_climatico"],
         bins=[-1, 1, 2, 4],
-        labels=["Baixo", "Medio", "Alto"],
+        labels=["Baixo", "Médio", "Alto"],
     )
 
     return df
 
 
-def tabela_risco_percentual(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula percentual de dias em cada classificacao de risco por cidade."""
+def calcular_tabela_risco(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula percentual de dias por classificacao de risco e cidade."""
     tabela = pd.crosstab(
         df["cidade"],
         df["classificacao_risco"],
         normalize="index",
-    ) * 100
+    )
+    return (tabela * 100).round(3)
 
-    return tabela.round(2)
 
-
-def gerar_grafico_risco(
-    tabela_risco: pd.DataFrame,
-    pasta_saida: str = "resultados/graficos",
-) -> None:
-    """Gera grafico de barras com percentual de risco por cidade."""
+def gerar_grafico_risco(tabela_risco: pd.DataFrame, pasta_saida: str | Path) -> None:
+    """Gera grafico de barras com distribuicao do risco por cidade."""
     pasta = Path(pasta_saida)
     pasta.mkdir(parents=True, exist_ok=True)
 
-    tabela_risco.plot(kind="bar", figsize=(9, 5))
-    plt.title("Percentual de dias por classificacao de risco climatico")
-    plt.xlabel("Cidade")
-    plt.ylabel("Percentual de dias (%)")
-    plt.xticks(rotation=0)
-    plt.legend(title="Classificacao")
-    plt.grid(True, alpha=0.3)
+    ax = tabela_risco.plot(kind="bar", figsize=(9, 5))
+    ax.set_title("Percentual de dias por classificacao de risco climatico")
+    ax.set_xlabel("Cidade")
+    ax.set_ylabel("Percentual de dias (%)")
+    ax.tick_params(axis="x", rotation=0)
+    ax.grid(True, axis="y", alpha=0.25)
     plt.tight_layout()
     plt.savefig(pasta / "risco_climatico_por_cidade.png", dpi=150)
     plt.close()
 
 
-def intervalo_confianca_media(dados: pd.Series, confianca: float = 0.95) -> tuple[float, float, float]:
-    """Calcula intervalo de confianca para a media usando distribuicao t."""
-    dados = dados.dropna()
-    n = len(dados)
-    media = float(np.mean(dados))
-    erro_padrao = stats.sem(dados)
-
+def intervalo_confianca_media(
+    serie: pd.Series,
+    confianca: float = 0.95,
+) -> tuple[float, float, float, int]:
+    """Calcula intervalo de confianca da media usando distribuicao t."""
+    serie = serie.dropna()
+    n = len(serie)
+    media = float(serie.mean())
+    erro_padrao = stats.sem(serie)
     intervalo = stats.t.interval(
         confidence=confianca,
         df=n - 1,
         loc=media,
         scale=erro_padrao,
     )
-
-    return media, float(intervalo[0]), float(intervalo[1])
-
-
-def tabela_ic_temp_max(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula IC 95% da temperatura maxima media por cidade."""
-    resultados = []
-
-    for cidade in df["cidade"].unique():
-        dados = df.loc[df["cidade"] == cidade, "temp_max"]
-        media, limite_inf, limite_sup = intervalo_confianca_media(dados)
-
-        resultados.append({
-            "cidade": cidade,
-            "variavel": "temp_max",
-            "media": round(media, 3),
-            "ic_95_inferior": round(limite_inf, 3),
-            "ic_95_superior": round(limite_sup, 3),
-        })
-
-    return pd.DataFrame(resultados)
+    return media, float(intervalo[0]), float(intervalo[1]), n
 
 
-def teste_levene_temp_max(df: pd.DataFrame):
-    """Teste de Levene para homogeneidade das variancias da temp_max."""
-    cidades = list(df["cidade"].unique())
+def calcular_ic_temp_max(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula IC 95% da temperatura maxima por cidade."""
+    linhas = []
+
+    for cidade, grupo in df.groupby("cidade"):
+        media, inferior, superior, n = intervalo_confianca_media(grupo["temp_max"])
+        linhas.append(
+            {
+                "cidade": cidade,
+                "variavel": "temp_max",
+                "n": n,
+                "media": round(media, 3),
+                "ic_95_inferior": round(inferior, 3),
+                "ic_95_superior": round(superior, 3),
+            }
+        )
+
+    return pd.DataFrame(linhas)
+
+
+def _obter_duas_amostras(df: pd.DataFrame, coluna: str) -> tuple[str, str, pd.Series, pd.Series]:
+    cidades = sorted(df["cidade"].dropna().unique())
     if len(cidades) != 2:
-        raise ValueError("Este teste foi configurado para exatamente duas cidades.")
+        raise ValueError("A comparacao estatistica exige exatamente duas cidades.")
 
-    x = df.loc[df["cidade"] == cidades[0], "temp_max"]
-    y = df.loc[df["cidade"] == cidades[1], "temp_max"]
-
-    return stats.levene(x, y)
-
-
-def teste_t_welch_temp_max(df: pd.DataFrame):
-    """Teste t de Welch para comparar temperatura maxima media entre duas cidades."""
-    cidades = list(df["cidade"].unique())
-    if len(cidades) != 2:
-        raise ValueError("Este teste foi configurado para exatamente duas cidades.")
-
-    x = df.loc[df["cidade"] == cidades[0], "temp_max"]
-    y = df.loc[df["cidade"] == cidades[1], "temp_max"]
-
-    return stats.ttest_ind(x, y, equal_var=False)
+    cidade_a, cidade_b = cidades
+    amostra_a = df.loc[df["cidade"] == cidade_a, coluna].dropna()
+    amostra_b = df.loc[df["cidade"] == cidade_b, coluna].dropna()
+    return cidade_a, cidade_b, amostra_a, amostra_b
 
 
-def teste_t_welch_risco(df: pd.DataFrame):
-    """Teste t de Welch para comparar indice medio de risco climatico."""
-    cidades = list(df["cidade"].unique())
-    if len(cidades) != 2:
-        raise ValueError("Este teste foi configurado para exatamente duas cidades.")
-
-    x = df.loc[df["cidade"] == cidades[0], "indice_risco_climatico"]
-    y = df.loc[df["cidade"] == cidades[1], "indice_risco_climatico"]
-
-    return stats.ttest_ind(x, y, equal_var=False)
-
-
-def cohens_d(x: pd.Series, y: pd.Series) -> float:
-    """Calcula Cohen's d para duas amostras independentes."""
-    x = x.dropna()
-    y = y.dropna()
-
-    nx = len(x)
-    ny = len(y)
-
-    var_x = x.var(ddof=1)
-    var_y = y.var(ddof=1)
-
-    pooled_std = np.sqrt(
-        ((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2)
+def executar_teste_levene(df: pd.DataFrame) -> pd.DataFrame:
+    """Executa teste de Levene para temp_max entre as duas cidades."""
+    cidade_a, cidade_b, amostra_a, amostra_b = _obter_duas_amostras(df, "temp_max")
+    resultado = stats.levene(amostra_a, amostra_b)
+    return pd.DataFrame(
+        [
+            {
+                "variavel": "temp_max",
+                "grupo_1": cidade_a,
+                "grupo_2": cidade_b,
+                "estatistica": float(resultado.statistic),
+                "p_valor": float(resultado.pvalue),
+                "alpha": 0.05,
+                "homogeneidade_variancias": "Nao" if resultado.pvalue < 0.05 else "Sim",
+            }
+        ]
     )
 
-    return float((x.mean() - y.mean()) / pooled_std)
+
+def executar_teste_t_welch(df: pd.DataFrame, coluna: str = "temp_max") -> pd.DataFrame:
+    """Executa teste t de Welch entre as duas cidades."""
+    cidade_a, cidade_b, amostra_a, amostra_b = _obter_duas_amostras(df, coluna)
+    resultado = stats.ttest_ind(amostra_a, amostra_b, equal_var=False)
+    return pd.DataFrame(
+        [
+            {
+                "variavel": coluna,
+                "grupo_1": cidade_a,
+                "grupo_2": cidade_b,
+                "media_grupo_1": round(float(amostra_a.mean()), 3),
+                "media_grupo_2": round(float(amostra_b.mean()), 3),
+                "estatistica_t": float(resultado.statistic),
+                "p_valor": float(resultado.pvalue),
+                "alpha": 0.05,
+                "rejeita_h0": "Sim" if resultado.pvalue < 0.05 else "Nao",
+            }
+        ]
+    )
 
 
-def cohens_d_temp_max(df: pd.DataFrame) -> float:
-    """Calcula Cohen's d da temperatura maxima entre duas cidades."""
-    cidades = list(df["cidade"].unique())
-    if len(cidades) != 2:
-        raise ValueError("Este calculo foi configurado para exatamente duas cidades.")
+def calcular_cohens_d(df: pd.DataFrame, coluna: str = "temp_max") -> pd.DataFrame:
+    """Calcula Cohen's d entre as duas cidades."""
+    cidade_a, cidade_b, amostra_a, amostra_b = _obter_duas_amostras(df, coluna)
+    n_a = len(amostra_a)
+    n_b = len(amostra_b)
+    variancia_a = amostra_a.var(ddof=1)
+    variancia_b = amostra_b.var(ddof=1)
+    desvio_agrupado = np.sqrt(
+        ((n_a - 1) * variancia_a + (n_b - 1) * variancia_b) / (n_a + n_b - 2)
+    )
+    valor = float((amostra_a.mean() - amostra_b.mean()) / desvio_agrupado)
 
-    x = df.loc[df["cidade"] == cidades[0], "temp_max"]
-    y = df.loc[df["cidade"] == cidades[1], "temp_max"]
+    if abs(valor) < 0.2:
+        interpretacao = "muito pequeno"
+    elif abs(valor) < 0.5:
+        interpretacao = "pequeno"
+    elif abs(valor) < 0.8:
+        interpretacao = "medio"
+    else:
+        interpretacao = "grande"
 
-    return cohens_d(x, y)
-
-
-def interpretar_pvalor(pvalor: float, alpha: float = 0.05) -> str:
-    """Interpreta um p-valor com base em alpha."""
-    if pvalor < alpha:
-        return "Rejeitamos H0: existe diferenca estatisticamente significativa."
-    return "Nao rejeitamos H0: nao ha evidencia suficiente de diferenca significativa."
-
-
-def interpretar_cohens_d(d: float) -> str:
-    """Interpreta Cohen's d por regra pratica."""
-    ad = abs(d)
-
-    if ad < 0.2:
-        return "efeito muito pequeno"
-    if ad < 0.5:
-        return "efeito pequeno"
-    if ad < 0.8:
-        return "efeito medio"
-    return "efeito grande"
+    return pd.DataFrame(
+        [
+            {
+                "variavel": coluna,
+                "grupo_1": cidade_a,
+                "grupo_2": cidade_b,
+                "cohens_d": round(valor, 6),
+                "interpretacao": interpretacao,
+            }
+        ]
+    )
 
 
-def salvar_tabelas_csv(resultados: dict, pasta_saida: str = "resultados/tabelas") -> None:
-    """Salva as principais tabelas em CSV."""
+def salvar_tabelas(resultados: dict, pasta_saida: str | Path) -> None:
+    """Salva as principais tabelas da analise em CSV."""
     pasta = Path(pasta_saida)
     pasta.mkdir(parents=True, exist_ok=True)
 
-    tabelas = {
-        "descritiva_geral": resultados["descritiva_geral"],
-        "medias_por_cidade": resultados["medias_por_cidade"],
-        "outliers": resultados["outliers"],
-        "correlacao": resultados["correlacao"],
-        "tabela_risco": resultados["tabela_risco"],
-        "ic_temp_max": resultados["ic_temp_max"],
-    }
+    nomes_tabelas = [
+        "descritiva_geral",
+        "descritiva_por_cidade",
+        "medias_por_cidade",
+        "outliers",
+        "correlacao",
+        "ic_temp_max",
+        "tabela_risco",
+        "teste_levene",
+        "teste_t_welch_temp_max",
+        "teste_t_welch_risco",
+        "cohens_d",
+    ]
 
-    for nome, tabela in tabelas.items():
-        tabela.to_csv(pasta / f"{nome}.csv", encoding="utf-8-sig")
+    for nome in nomes_tabelas:
+        resultados[nome].to_csv(pasta / f"{nome}.csv", encoding="utf-8-sig")
 
 
 def imprimir_resumo(resultados: dict) -> None:
-    """Imprime resumo final da analise."""
+    """Imprime um resumo curto da analise completa."""
     df = resultados["df"]
-    teste_t = resultados["teste_t"]
-    teste_risco = resultados["teste_risco"]
-    d = resultados["cohens_d"]
 
     print("RESUMO DO DATASET")
     print("-" * 60)
-    print(f"Quantidade de registros: {df.shape[0]}")
-    print(f"Quantidade de colunas: {df.shape[1]}")
-    print(f"Periodo: {df['data'].min().date()} ate {df['data'].max().date()}")
-    print(f"Cidades analisadas: {', '.join(df['cidade'].unique())}")
+    print(f"Shape: {df.shape}")
+    print(f"Periodo: {df['data'].min().date()} a {df['data'].max().date()}")
+    print(f"Cidades: {', '.join(sorted(df['cidade'].unique()))}")
 
-    print("\nMEDIA DAS VARIAVEIS POR CIDADE")
+    print("\nMEDIAS POR CIDADE")
     print("-" * 60)
     print(resultados["medias_por_cidade"])
 
-    print("\nCLASSIFICACAO DE RISCO POR CIDADE (%)")
-    print("-" * 60)
-    print(resultados["tabela_risco"])
-
-    print("\nINTERVALO DE CONFIANCA 95% - TEMPERATURA MAXIMA")
+    print("\nINTERVALO DE CONFIANCA 95% - TEMP_MAX")
     print("-" * 60)
     print(resultados["ic_temp_max"])
 
-    print("\nTESTE DE LEVENE - HOMOGENEIDADE DAS VARIANCIAS")
+    print("\nTESTE T DE WELCH - TEMP_MAX")
     print("-" * 60)
-    print(f"Estatistica: {resultados['teste_levene'].statistic:.4f}")
-    print(f"P-valor: {resultados['teste_levene'].pvalue:.10f}")
-    print(interpretar_pvalor(resultados["teste_levene"].pvalue))
+    print(resultados["teste_t_welch_temp_max"])
 
-    print("\nTESTE T DE WELCH - TEMPERATURA MAXIMA")
+    print("\nCOHEN'S D - TEMP_MAX")
     print("-" * 60)
-    print("H0: a temperatura maxima media das cidades e igual.")
-    print("H1: a temperatura maxima media das cidades e diferente.")
-    print(f"Estatistica t: {teste_t.statistic:.4f}")
-    print(f"P-valor: {teste_t.pvalue:.10f}")
-    print(interpretar_pvalor(teste_t.pvalue))
-
-    print("\nTAMANHO DE EFEITO - COHEN'S D")
-    print("-" * 60)
-    print(f"Cohen's d: {d:.4f}")
-    print(f"Interpretacao: {interpretar_cohens_d(d)}")
-
-    print("\nTESTE T DE WELCH - INDICE DE RISCO CLIMATICO")
-    print("-" * 60)
-    print("H0: o indice medio de risco climatico das cidades e igual.")
-    print("H1: o indice medio de risco climatico das cidades e diferente.")
-    print(f"Estatistica t: {teste_risco.statistic:.4f}")
-    print(f"P-valor: {teste_risco.pvalue:.10f}")
-    print(interpretar_pvalor(teste_risco.pvalue))
+    print(resultados["cohens_d"])
 
 
 def executar_analise_completa(
-    caminho_csv: str = "dados/dataset_agroclima_orbital.csv",
-    pasta_saida: str = "resultados",
+    caminho_csv: str | Path = "dados/dataset_agroclima_orbital.csv",
+    pasta_saida: str | Path = "resultados",
     gerar_graficos: bool = True,
     salvar_csvs: bool = True,
     mostrar_resumo: bool = True,
 ) -> dict:
-    """
-    Executa a analise completa:
-    - leitura e preparacao
-    - estatistica descritiva
-    - outliers
-    - correlacao
-    - indice de risco
-    - intervalo de confianca
-    - testes de hipotese
-    - tamanho de efeito
-    - graficos e tabelas
-    """
+    """Executa a analise completa e retorna tabelas, testes e dataset final."""
     pasta_saida = Path(pasta_saida)
+    pasta_graficos = pasta_saida / "graficos"
+    pasta_tabelas = pasta_saida / "tabelas"
     pasta_saida.mkdir(parents=True, exist_ok=True)
 
     df = carregar_e_preparar(caminho_csv)
-    df = criar_indice_risco(df)
+    df = criar_indice_risco_climatico(df)
 
     descritiva_geral, descritiva_por_cidade = estatistica_descritiva(df)
-    medias = medias_por_cidade(df)
-    outliers = tabela_outliers(df)
-    correlacao = matriz_correlacao(df)
-    risco = tabela_risco_percentual(df)
-    ic = tabela_ic_temp_max(df)
-
-    teste_levene = teste_levene_temp_max(df)
-    teste_t = teste_t_welch_temp_max(df)
-    teste_risco = teste_t_welch_risco(df)
-    d = cohens_d_temp_max(df)
-
     resultados = {
         "df": df,
-        "variaveis": VARIAVEIS,
         "descritiva_geral": descritiva_geral,
         "descritiva_por_cidade": descritiva_por_cidade,
-        "medias_por_cidade": medias,
-        "outliers": outliers,
-        "correlacao": correlacao,
-        "tabela_risco": risco,
-        "ic_temp_max": ic,
-        "teste_levene": teste_levene,
-        "teste_t": teste_t,
-        "teste_risco": teste_risco,
-        "cohens_d": d,
+        "medias_por_cidade": calcular_medias_por_cidade(df),
+        "outliers": identificar_outliers_iqr(df),
+        "correlacao": calcular_correlacao(df),
+        "ic_temp_max": calcular_ic_temp_max(df),
+        "tabela_risco": calcular_tabela_risco(df),
+        "teste_levene": executar_teste_levene(df),
+        "teste_t_welch_temp_max": executar_teste_t_welch(df, "temp_max"),
+        "teste_t_welch_risco": executar_teste_t_welch(df, "indice_risco_climatico"),
+        "cohens_d": calcular_cohens_d(df, "temp_max"),
     }
+    resultados["teste_t"] = resultados["teste_t_welch_temp_max"]
 
     if gerar_graficos:
-        pasta_graficos = pasta_saida / "graficos"
         gerar_histogramas(df, pasta_graficos)
         gerar_boxplots(df, pasta_graficos)
-        gerar_grafico_correlacao(correlacao, pasta_graficos)
-        gerar_grafico_risco(risco, pasta_graficos)
+        gerar_grafico_correlacao(resultados["correlacao"], pasta_graficos)
+        gerar_grafico_risco(resultados["tabela_risco"], pasta_graficos)
 
     if salvar_csvs:
-        salvar_tabelas_csv(resultados, pasta_saida / "tabelas")
+        salvar_tabelas(resultados, pasta_tabelas)
         df.to_csv(
             pasta_saida / "dataset_agroclima_orbital_com_risco.csv",
             index=False,
@@ -531,3 +452,7 @@ def executar_analise_completa(
         imprimir_resumo(resultados)
 
     return resultados
+
+
+if __name__ == "__main__":
+    executar_analise_completa()
